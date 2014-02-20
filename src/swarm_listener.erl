@@ -20,7 +20,6 @@
 %% OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 %% WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 %%
-
 -module(swarm_listener).
 
 -export([start_link/5]).
@@ -33,7 +32,6 @@ start_link(Name, AcceptorCount, Transport, TransOpts, {M, F, A}) ->
                      [Name, AcceptorCount, Transport, TransOpts, {M, F, A}]),
     {ok, Pid}.
 
-
 run(Name, AcceptorCount, Transport, TransOpts, {M, F, A}) ->
     process_flag(trap_exit, true),
     {ok, LSock} = Transport:listen(TransOpts),
@@ -41,7 +39,6 @@ run(Name, AcceptorCount, Transport, TransOpts, {M, F, A}) ->
     [spawn_link(?MODULE,acceptor,SpawnArgs) || _ <- lists:seq(1, AcceptorCount)],
     State = {Name,SpawnArgs,AcceptorCount},
     loop(State, 0, 0, 0).
-
 
 loop({_Name, SpawnArgs, _Acceptors} = State, Count, RunningCount, ErrorCount) ->
     ?DEBUG("~s configured acceptors: ~p, actual: ~p, running: ~p, errored: ~p", 
@@ -65,23 +62,24 @@ loop({_Name, SpawnArgs, _Acceptors} = State, Count, RunningCount, ErrorCount) ->
         _ -> loop(State, Count, RunningCount, ErrorCount)
     end.
 
-
-acceptor(LPid, Name, LSock, Transport, {M, F, A}) ->
+acceptor(LPid, Name, LSock, Transport, FunDesc) ->
     LPid ! listening,
     Accept = Transport:accept(LSock),
     LPid ! accepted,
     case Accept of
-        {ok, S} ->
-            erlang:apply(M, F, [S, Name, Transport, get_info(Transport, S)]++A);
+        {ok, S} -> run_fun_desc( S, Name, Transport, FunDesc );
         {error, closed} ->
             ?DEBUG("~s Transport:accept received {error, closed}", [Name]);
         Error -> ?ERROR("~s Transport:accept error ~p", [Name, Error])
     end.
 
+run_fun_desc( S, Name, Transport, {M,F,A} ) -> 
+    erlang:apply(M, F, [S, Name, Transport, get_info(Transport, S), A]);
+run_fun_desc( S, Name, Transport, F ) when is_function( F ) ->
+    F( S, Name, Transport, get_info( Transport, S ) ).
 
 get_info(Transport, Socket) ->
     {ok, {Addr, Port}} = Transport:peername(Socket),
     DN = Transport:dn(Socket),
     #swarm_info{peer_addr = Addr, peer_port = Port, peer_dn = DN}.
-
 

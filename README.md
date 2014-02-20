@@ -42,15 +42,21 @@ Using swarm
   {swarm, ".*", {git, "https://github.com/jeremey/swarm.git", {branch, "master"}}}
 ```
 
-* Start the application
+Then you can use swarm as a separate application tree: 
+
+* Start the application, then add listener pools with a particular handler:
 
 ```erlang
-  swarm:start()
+  swarm:start(),
+
+  Handler = {my_handler, handle, []},
+  AltHandler = fun() -> ... end,
+  {ok, Pid} = swarm:start_listener(my_app, 100, swarm_tcp, [{port, 8080}], Handler).
 ```
 
-* Start a listener
+* Or, you can add swarm to your own application tree:
 
 ```erlang
-  {ok, Pid} = swarm:start_listener(my_app, 100, swarm_tcp, [{port, 8080}], {my_app_handler, handle, []})
+  swarm:child_spec(my_app, 100, swarm_tcp, [{port,8080}], Handler)
 ```
 
