@@ -6,6 +6,10 @@ deps:
 	rebar get-deps
 
 
+debug:
+	rebar -Ddebug compile
+
+
 compile:
 	rebar compile
 

@@ -24,77 +24,64 @@
 -module(swarm_listener).
 
 -export([start_link/5]).
+-export([run/5,acceptor/5]).
 
 -include("../include/swarm.hrl").
 
 start_link(Name, AcceptorCount, Transport, TransOpts, {M, F, A}) ->
-    Pid = spawn_link(fun() ->
-                             run(Name, AcceptorCount, Transport, TransOpts, {M, F, A})
-                     end),
+    Pid = spawn_link(?MODULE, run,
+                     [Name, AcceptorCount, Transport, TransOpts, {M, F, A}]),
     {ok, Pid}.
 
 
 run(Name, AcceptorCount, Transport, TransOpts, {M, F, A}) ->
-    LogModule = swarm:get_env(log_module),
-    
-    %% trap exits
     process_flag(trap_exit, true),
-
     {ok, LSock} = Transport:listen(TransOpts),
-
-    Self = self(),
-    SpawnFun = fun() ->
-                       spawn_link(fun() -> acceptor(Self, Name, LSock, Transport, LogModule, {M, F, A}) end)
-               end,
-
-    [SpawnFun() || _X <- lists:seq(1, AcceptorCount)],
-
-    loop(Name, LogModule, SpawnFun, AcceptorCount, 0, 0, 0).
+    SpawnArgs = [self(), Name, LSock, Transport, {M, F, A}],
+    [spawn_link(?MODULE,acceptor,SpawnArgs) || _ <- lists:seq(1, AcceptorCount)],
+    State = {Name,SpawnArgs,AcceptorCount},
+    loop(State, 0, 0, 0).
 
 
-loop(Name, LogModule, SpawnFun, Acceptors, Count, RunningCount, ErrorCount) ->
-    LogModule:debug("~s configured acceptors: ~p, actual: ~p, running: ~p, errored: ~p", [Name, Acceptors, Count, RunningCount, ErrorCount]),
+loop({_Name, SpawnArgs, _Acceptors} = State, Count, RunningCount, ErrorCount) ->
+    ?DEBUG("~s configured acceptors: ~p, actual: ~p, running: ~p, errored: ~p", 
+           [_Name, _Acceptors, Count, RunningCount, ErrorCount]),
     receive
-        listening ->
-            loop(Name, LogModule, SpawnFun, Acceptors, Count+1, RunningCount, ErrorCount);
+        listening -> 
+            loop(State, Count+1, RunningCount, ErrorCount);
 
         accepted ->
-            SpawnFun(),
-            loop(Name, LogModule, SpawnFun, Acceptors, Count-1, RunningCount+1, ErrorCount);
+            spawn_link(?MODULE, acceptor, SpawnArgs),
+            loop(State, Count-1, RunningCount+1, ErrorCount);
 
-        {'EXIT', _FromPid, normal} ->
-            loop(Name, LogModule, SpawnFun, Acceptors, Count, RunningCount-1, ErrorCount);
+        {'EXIT', _FromPid, normal} -> 
+            loop(State, Count, RunningCount-1, ErrorCount);
 
-        {'EXIT', FromPid, Reason} ->
-            LogModule:debug("~s child pid ~p died with reason ~p", [Name, FromPid, Reason]),
-            loop(Name, LogModule, SpawnFun, Acceptors, Count, RunningCount-1, ErrorCount+1);
+        {'EXIT', _FromPid, _Reason} ->
+            ?DEBUG("~s child pid ~p died with reason ~p",
+                                                    [_Name,_FromPid,_Reason]),
+            loop(State, Count, RunningCount-1, ErrorCount+1);
 
-        _ ->
-            loop(Name, LogModule, SpawnFun, Acceptors, Count, RunningCount, ErrorCount)
+        _ -> loop(State, Count, RunningCount, ErrorCount)
     end.
 
 
-acceptor(LPid, Name, LSock, Transport, LogModule, {M, F, A}) ->
+acceptor(LPid, Name, LSock, Transport, {M, F, A}) ->
     LPid ! listening,
     Accept = Transport:accept(LSock),
     LPid ! accepted,
     case Accept of
         {ok, S} ->
-            erlang:apply(M, F, [S, Name, Transport, get_info(Transport, S)] ++ A);
+            erlang:apply(M, F, [S, Name, Transport, get_info(Transport, S)]++A);
         {error, closed} ->
-            LogModule:debug("~s Transport:accept received {error, closed}", [Name]),
-            ok;
-        Error ->
-            LogModule:error("~s Transport:accept error ~p", [Name, Error]),
-            Error
+            ?DEBUG("~s Transport:accept received {error, closed}", [Name]);
+        Error -> ?ERROR("~s Transport:accept error ~p", [Name, Error])
     end.
 
 
 get_info(Transport, Socket) ->
     {ok, {Addr, Port}} = Transport:peername(Socket),
     DN = Transport:dn(Socket),
-    #swarm_info{peer_addr = Addr,
-                peer_port = Port,
-                peer_dn = DN}.
+    #swarm_info{peer_addr = Addr, peer_port = Port, peer_dn = DN}.
 
 

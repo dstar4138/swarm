@@ -34,8 +34,5 @@
                   public_key,
                   ssl
                  ]},
-  {mod, { swarm_app, []}},
-  {env, [
-         {log_module, swarm_log_none}
-        ]}
+  {mod, { swarm_app, []}}
  ]}.
